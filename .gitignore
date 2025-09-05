@@ -1,0 +1,6 @@
+# Ignore Streamlit secrets file
+.streamlit/secrets.toml
+
+# Python cache files
+__pycache__/
+*.pyc

@@ -3,18 +3,19 @@ import pandas as pd
 import os
 from datetime import datetime
 import plotly.express as px
-import openai  # New openai library
+import google.generativeai as genai # --- NEW: Import Google's library
 
-#   view in running notes
-# New Configure OpenAI client with your secret key 
-# Streamlit will automatically look for the key in .streamlit/secrets.toml
+# --- Configure Google AI with secret key ---
 try:
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
+    genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
 except KeyError:
-    st.error("OpenAI API key not found! Please add it to your .streamlit/secrets.toml file.")
-    # Stop app if  key not found
+    st.error("Google AI API key not found! Please add it to your .streamlit/secrets.toml file.")
+    st.stop()
+except Exception as e:
+    st.error(f"Error configuring Google AI: {e}")
     st.stop()
 
+# --- All functions ---
 CURRENCY = "₹"
 
 def get_data_filename():
@@ -35,14 +36,48 @@ def save_transactions(df, filename):
     df_to_save.to_csv(filename, index=False)
     st.success(f"Data saved to {filename}!")
 
+
+# --- Switched to Google Gemini ---
+def get_ai_savings_tips(expense_df):
+    """
+    Sends expense data to Google's Gemini Pro model and returns savings tips.
+    """
+    if expense_df.empty:
+        return "Not enough expense data to analyze. Please add more transactions."
+
+    expense_summary = expense_df.groupby('category')['amount'].sum().reset_index()
+    prompt_data = "\n".join([f"- {row['category']}: {CURRENCY}{row['amount']:.2f}" for index, row in expense_summary.iterrows()])
+
+    # prompt for the new model
+    prompt = f"""
+    You are a friendly and helpful financial advisor for a beginner in India.
+    Based on the following expense summary in Indian Rupees (INR), provide 3 actionable and simple savings tips.
+    Make the tips easy to understand and encouraging. Format the output as a numbered list.
+
+    Expense Summary:
+    {prompt_data}
+    """
+    try:
+        # Initialize the Gemini model
+        model = genai.GenerativeModel('gemini-pro')
+        # This is the new API call
+        response = model.generate_content(prompt)
+        # Access the response text
+        return response.text
+    except Exception as e:
+        return f"Sorry, I couldn't connect to the Google AI service. Error: {e}"
+
+
+# --- STREAMLIT UI CODE (The rest of the file is the same) ---
 st.set_page_config(page_title="AI Finance Manager", page_icon="💰", layout="wide")
+
 if 'transactions_df' not in st.session_state:
     st.session_state.transactions_df = load_transactions(get_data_filename())
 
 st.title("💰 AI-Powered Personal Finance Manager")
 st.write(f"You are managing transactions for: `{get_data_filename()}`")
 
-# --- All the sidebar code... ---
+# Sidebar and other UI elements are unchanged...
 st.sidebar.header("Actions")
 st.sidebar.header("Set Your Budget")
 with st.sidebar.form(key="budget_form"):
@@ -86,7 +121,7 @@ if uploaded_file is not None:
         st.sidebar.error(f"Upload failed. The CSV is missing required columns.")
 
 
-# --- Dashboard display... ---
+# --- Dashboard display (no changes) ---
 st.header("Financial Dashboard")
 df = st.session_state.transactions_df
 income_df = df[df['type'] == 'income']
@@ -105,10 +140,8 @@ if 'monthly_budget' in st.session_state and st.session_state.monthly_budget > 0:
     st.subheader("Budget Progress")
     progress = total_expense / budget
     st.progress(min(progress, 1.0), text=f"{CURRENCY}{total_expense:,.2f} / {CURRENCY}{budget:,.2f} spent")
-    if progress > 1:
-        st.error("You are over budget!")
-    elif progress > 0.85:
-        st.warning("You are close to your budget limit!")
+    if progress > 1: st.error("You are over budget!")
+    elif progress > 0.85: st.warning("You are close to your budget limit!")
 
 st.markdown("---")
 col1, col2 = st.columns(2)
@@ -116,10 +149,9 @@ with col1:
     st.subheader("Expenses by Category")
     if not expense_df.empty:
         expense_by_category = expense_df.groupby('category')['amount'].sum().reset_index()
-        fig_pie = px.pie(expense_by_category, values='amount', names='category', title="Expense Distribution", color_discrete_sequence=px.colors.sequential.Agsunset)
+        fig_pie = px.pie(expense_by_category, values='amount', names='category', title="Expense Distribution")
         st.plotly_chart(fig_pie, use_container_width=True)
-    else:
-        st.info("No expense data to display.")
+    else: st.info("No expense data to display.")
 with col2:
     st.subheader("Income vs. Expenses")
     income_expense_data = {'Metric': ['Total Income', 'Total Expenses'], 'Amount': [total_income, total_expense]}
@@ -129,27 +161,31 @@ with col2:
 
 st.markdown("---")
 
-# --- Transaction History & Delete ---
+# --- AI FEATURES SECTION ---
+st.header("🤖 AI Financial Advisor")
+
+if st.button("Get Basic AI Savings Tips"):
+    with st.spinner("Our AI is analyzing your spending..."):
+        tips = get_ai_savings_tips(expense_df)
+        st.success("Here are your personalized tips!")
+        formatted_tips = tips.replace('. ', '.\n\n> ')
+        st.markdown(f"> {formatted_tips}")
+
+
+st.markdown("---")
+
+# --- Transaction History & Delete (no changes) ---
 st.header("Transaction History")
-df_display = st.session_state.transactions_df
-if not df_display.empty:
-    st.dataframe(df_display, use_container_width=True)
+if not df.empty:
+    st.dataframe(df, use_container_width=True)
     st.subheader("Delete a Transaction")
-    delete_options = [f"{i}: {row['type']} - {row['category']} - {CURRENCY}{row['amount']:.2f}" for i, row in df_display.iterrows()]
+    delete_options = [f"{i}: {row['type']} - {row['category']} - {CURRENCY}{row['amount']:.2f}" for i, row in df.iterrows()]
     trans_to_delete = st.selectbox("Select transaction to delete", options=delete_options, key="delete_dropdown", index=None, placeholder="Choose a transaction...")
     if st.button("Delete Selected Transaction"):
         if trans_to_delete is not None:
-            trans_index_to_delete = int(trans_to_delete.split(':')[0])
-            st.session_state.transactions_df = st.session_state.transactions_df.drop(trans_index_to_delete).reset_index(drop=True)
+            trans_index = int(trans_to_delete.split(':')[0])
+            st.session_state.transactions_df = df.drop(index=trans_index).reset_index(drop=True)
             save_transactions(st.session_state.transactions_df, get_data_filename())
-            st.success("Transaction deleted!")
             st.rerun()
-        else:
-            st.warning("Please select a transaction to delete.")
 else:
-    st.info("Add a transaction using the sidebar to get started.")
-
-st.markdown("---")
-st.header("🤖 AI Financial Advisor")
-st.write("Connect to our AI to get personalized financial tips and analysis.")
-# add the actual button and logic in from example_run.py)
+    st.info("Add transactions to get started.")

@@ -1,1 +1,8 @@
 type,category,amount,date
+income,salary,25000.0,2025-09-05
+expense,food,1582.0,2025-09-05
+expense,beverages,1750.0,2025-09-04
+income,stocks,2500.0,2025-09-05
+expense,rent,1700.0,2025-09-05
+income,farm,1250.0,2025-09-05
+expense,loans,700.0,2025-09-05
